@@ -78,6 +78,7 @@ class Uniswap:
         # use_eip1559: bool = True,
         factory_contract_addr: str = None,
         router_contract_addr: str = None,
+        build_only: bool = False
     ) -> None:
         """
         :param address: The public address of the ETH wallet to use.
@@ -88,6 +89,7 @@ class Uniswap:
         :param default_slippage: Default slippage for a trade, as a float (0.01 is 1%). WARNING: slippage is untested.
         :param factory_contract_addr: Can be optionally set to override the address of the factory contract.
         :param router_contract_addr: Can be optionally set to override the address of the router contract (v2 only).
+        :param [adjustment (r4VP4)] does only build a tx without sending it.
         """
         self.address = _str_to_addr(
             address or "0x0000000000000000000000000000000000000000"
@@ -106,6 +108,8 @@ class Uniswap:
         # TODO: Write tests for slippage
         self.default_slippage = default_slippage
         self.use_estimate_gas = use_estimate_gas
+
+        self.build_only = build_only
 
         if web3:
             self.w3 = web3
@@ -442,8 +446,8 @@ class Uniswap:
         recipient: AddressLike = None,
         fee: int = None,
         slippage: float = None,
-        fee_on_transfer: bool = False,
-    ) -> HexBytes:
+        fee_on_transfer: bool = False
+    ) -> Union[HexBytes, TxParams]:
         """Make a trade by defining the qty of the input token."""
         if fee is None:
             fee = 3000
@@ -466,13 +470,13 @@ class Uniswap:
             )
         else:
             return self._token_to_token_swap_input(
-                input_token,
-                output_token,
-                qty,
-                recipient,
-                fee,
-                slippage,
-                fee_on_transfer,
+                input_token=input_token,
+                output_token=output_token,
+                qty=qty,
+                recipient=recipient,
+                fee=fee,
+                slippage=slippage,
+                fee_on_transfer=fee_on_transfer
             )
 
     @check_approval
@@ -484,7 +488,7 @@ class Uniswap:
         recipient: AddressLike = None,
         fee: int = None,
         slippage: float = None,
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Make a trade by defining the qty of the output token."""
         if fee is None:
             fee = 3000
@@ -521,8 +525,8 @@ class Uniswap:
         recipient: Optional[AddressLike],
         fee: int,
         slippage: float,
-        fee_on_transfer: bool = False,
-    ) -> HexBytes:
+        fee_on_transfer: bool = False
+    ) -> Union[HexBytes, TxParams]:
         """Convert ETH to tokens given an input amount."""
         if output_token == ETH_ADDRESS:
             raise ValueError
@@ -577,7 +581,7 @@ class Uniswap:
             sqrtPriceLimitX96 = 0
 
             return self._build_and_send_tx(
-                self.router.functions.exactInputSingle(
+                function=self.router.functions.exactInputSingle(
                     {
                         "tokenIn": self.get_weth_address(),
                         "tokenOut": output_token,
@@ -589,7 +593,7 @@ class Uniswap:
                         "sqrtPriceLimitX96": sqrtPriceLimitX96,
                     }
                 ),
-                self._get_tx_params(value=qty),
+                tx_params=self._get_tx_params(value=qty)
             )
         else:
             raise ValueError  # pragma: no cover
@@ -602,7 +606,7 @@ class Uniswap:
         fee: int,
         slippage: float,
         fee_on_transfer: bool = False,
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Convert tokens to ETH given an input amount."""
         if input_token == ETH_ADDRESS:
             raise ValueError
@@ -692,8 +696,8 @@ class Uniswap:
         recipient: Optional[AddressLike],
         fee: int,
         slippage: float,
-        fee_on_transfer: bool = False,
-    ) -> HexBytes:
+        fee_on_transfer: bool = False
+    ) -> Union[HexBytes, TxParams]:
         """Convert tokens to tokens given an input amount."""
         # Balance check
         input_balance = self.get_token_balance(input_token)
@@ -786,7 +790,7 @@ class Uniswap:
         recipient: Optional[AddressLike],
         fee: int,
         slippage: float,
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Convert ETH to tokens given an output amount."""
         if output_token == ETH_ADDRESS:
             raise ValueError
@@ -866,7 +870,7 @@ class Uniswap:
         recipient: Optional[AddressLike],
         fee: int,
         slippage: float,
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Convert tokens to ETH given an output amount."""
         if input_token == ETH_ADDRESS:
             raise ValueError
@@ -957,7 +961,7 @@ class Uniswap:
         recipient: Optional[AddressLike],
         fee: int,
         slippage: float,
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Convert tokens to tokens given an output amount.
 
         :param fee: TODO
@@ -1078,7 +1082,7 @@ class Uniswap:
     @check_approval
     def add_liquidity(
         self, token: AddressLike, max_eth: Wei, min_liquidity: int = 1
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Add liquidity to the pool."""
         tx_params = self._get_tx_params(max_eth)
         # Add 1 to avoid rounding errors, per
@@ -1090,7 +1094,7 @@ class Uniswap:
 
     @supports([1])
     @check_approval
-    def remove_liquidity(self, token: str, max_token: int) -> HexBytes:
+    def remove_liquidity(self, token: str, max_token: int) -> Union[HexBytes, TxParams]:
         """Remove liquidity from the pool."""
         func_params = [int(max_token), 1, 1, self._deadline()]
         function = self._exchange_contract(token).functions.removeLiquidity(
@@ -1428,11 +1432,14 @@ class Uniswap:
 
     def _build_and_send_tx(
         self, function: ContractFunction, tx_params: Optional[TxParams] = None
-    ) -> HexBytes:
+    ) -> Union[HexBytes, TxParams]:
         """Build and send a transaction."""
         if not tx_params:
             tx_params = self._get_tx_params()
         transaction = function.build_transaction(tx_params)
+
+        if self.build_only:
+            return transaction
 
         if "gas" not in tx_params:
             # `use_estimate_gas` needs to be True for networks like Arbitrum (can't assume 250000 gas),

@@ -1,4 +1,5 @@
 import functools
+import logging
 from typing import Callable, List, TYPE_CHECKING, TypeVar, Optional
 from typing_extensions import ParamSpec, Concatenate
 
@@ -34,7 +35,10 @@ def check_approval(
             is_approved = self._is_approved(token)
             # logger.warning(f"Approved? {token}: {is_approved}")
             if not is_approved:
-                self.approve(token)
+                if self.build_only is False:
+                    self.approve(token)
+                else:
+                    logging.getLogger('why_is_there_no_logger').warning(f"Approved? {token}: {is_approved}")
         return method(self, *args, **kwargs)
 
     return approved
